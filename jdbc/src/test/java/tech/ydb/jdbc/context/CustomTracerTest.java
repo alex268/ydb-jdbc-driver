@@ -44,7 +44,6 @@ public class CustomTracerTest {
         Assertions.assertTrue(custom.spanCreated > 0);
     }
 
-
     private class TestTracer implements Tracer {
         private int spanCreated = 0;
 

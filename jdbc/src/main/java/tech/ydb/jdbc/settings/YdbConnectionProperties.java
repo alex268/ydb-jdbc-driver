@@ -230,9 +230,13 @@ public class YdbConnectionProperties {
             builder = applyChannelInitializer(builder, initializer);
         }
 
-        if (JdbcDriverVersion.getInstance().isSdkVersion(2, 4, 6)) {
-            if (withTracer.hasValue()) {
+        if (withTracer.hasValue()) {
+            JdbcDriverVersion version = JdbcDriverVersion.getInstance();
+            if (version.isSdkVersion(2, 4, 6)) {
                 builder = applyTracer(builder, withTracer.getValue());
+            } else {
+                LOGGER.log(Level.WARNING, "Option 'withTracer' was ignored because SDK version {0} is too old",
+                        version.getSdkVersion());
             }
         }
 

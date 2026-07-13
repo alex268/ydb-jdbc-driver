@@ -23,6 +23,10 @@ public class JdbcDriverVersion {
         this.sdk = sdk;
     }
 
+    public String getSdkVersion() {
+        return sdk;
+    }
+
     public int getMajor() {
         return major;
     }
