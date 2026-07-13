@@ -264,9 +264,8 @@ public class YdbContext implements AutoCloseable {
                     GrpcTableRpc.useTransport(grpcTransport)
             );
             QueryClientImpl.Builder queryClient = QueryClientImpl.newClient(grpcTransport);
-
+            connProps.applyToClients(tableClient, queryClient);
             boolean autoResize = clientProps.applyToTableClient(tableClient, queryClient);
-
             return new YdbContext(config, operationProps, queryProps, grpcTransport, tableClient.build(),
                     queryClient.build(), autoResize);
         } catch (RuntimeException ex) {
