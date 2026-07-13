@@ -1,3 +1,9 @@
+## 2.4.0 ##
+
+* Upgrade to YDB Java SDK v2.4.7
+* Enabled useStreamResultSets by default
+* Added options 'withTracer' and 'withMeter'
+
 ## 2.3.27 ##
 
 * Fixed datarace in YdbQueryResultReader
