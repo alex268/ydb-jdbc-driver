@@ -85,7 +85,7 @@ public class YdbConnectionProperties {
                     + "Meter or Supplier<Meter>. Can be 'true' for the default global OpenTelemetry meter");
 
     static final YdbProperty<String> METER_POOL_NAME = YdbProperty.string("meterPoolName",
-            "The value of the metric's attribute 'poolName'. By defaul is 'jdbc'", "jdbc");
+            "The value of the metric's attribute 'poolName'. By default is 'jdbc'", "jdbc");
 
     private final String username;
     private final String password;
@@ -303,7 +303,7 @@ public class YdbConnectionProperties {
             try {
                 Class<?> clazz = Class.forName(className);
                 if (!Supplier.class.isAssignableFrom(clazz)) {
-                    throw new SQLException("tokenProvider " + className + " is not implement Supplier<String>");
+                    throw new SQLException("tokenProvider " + className + " does not implement Supplier<String>");
                 }
                 Supplier<?> prov = clazz.asSubclass(Supplier.class)
                         .getConstructor(new Class<?>[0])
@@ -358,7 +358,7 @@ public class YdbConnectionProperties {
         try {
             Class<?> clazz = Class.forName(className);
             if (!Consumer.class.isAssignableFrom(clazz)) {
-                throw new SQLException("channelInitializer " + className + " is not implement "
+                throw new SQLException("channelInitializer " + className + " does not implement "
                         + "Consumer<ManagedChannelBuilder>");
             }
             return clazz.asSubclass(Consumer.class)
@@ -387,6 +387,9 @@ public class YdbConnectionProperties {
             Object impl = ((Supplier) obj).get();
             if (impl instanceof Tracer) {
                 return (Tracer) impl;
+            } else {
+                String className = obj.getClass().getName();
+                throw new SQLException("Tracer supplier " + className + " did not return a Tracer instance");
             }
         }
 
@@ -411,7 +414,8 @@ public class YdbConnectionProperties {
             }
 
             if (!FQCN.matcher(className).matches()) {
-                throw new SQLException("tracer must be full class name or instance of tech.ydb.core.tracing.Tracer");
+                throw new SQLException("withTracer option must be full class name or object instance implementing "
+                        + "tech.ydb.core.tracing.Tracer");
             }
 
             try {
@@ -432,12 +436,13 @@ public class YdbConnectionProperties {
                     if (tracer instanceof Tracer) {
                         return (Tracer) tracer;
                     }
-                    throw new SQLException("tracer " + className + " is not implement Supplier<Tracer>");
+
+                    throw new SQLException("Tracer " + className + " supplied object is not a Tracer instance");
                 }
 
-                throw new SQLException("tracer " + className + " is not implement tech.ydb.core.tracing.Tracer");
+                throw new SQLException("Tracer " + className + " does not implement tech.ydb.core.tracing.Tracer");
             } catch (ClassNotFoundException ex) {
-                throw new SQLException("tracer " + className + " not found", ex);
+                throw new SQLException("Tracer class " + className + " not found", ex);
             } catch (NoSuchMethodException | SecurityException | InstantiationException | IllegalAccessException
                     | IllegalArgumentException | InvocationTargetException ex) {
                 throw new SQLException("Cannot construct tracer " + className, ex);
@@ -460,6 +465,9 @@ public class YdbConnectionProperties {
             Object impl = ((Supplier) obj).get();
             if (impl instanceof Meter) {
                 return (Meter) impl;
+            } else {
+                String className = obj.getClass().getName();
+                throw new SQLException("Meter supplier " + className + " did not return a Meter instance");
             }
         }
 
@@ -484,7 +492,8 @@ public class YdbConnectionProperties {
             }
 
             if (!FQCN.matcher(className).matches()) {
-                throw new SQLException("meter must be full class name or instance of tech.ydb.core.metrics.Meter");
+                throw new SQLException("withMeter option must be full class name or object instance implementing "
+                        + "tech.ydb.core.metrics.Meter");
             }
 
             try {
@@ -505,12 +514,12 @@ public class YdbConnectionProperties {
                     if (meter instanceof Meter) {
                         return (Meter) meter;
                     }
-                    throw new SQLException("meter " + className + " is not implement Supplier<Meter>");
+                    throw new SQLException("Meter " + className + " supplied object is not a Meter instance");
                 }
 
-                throw new SQLException("meter " + className + " is not implement tech.ydb.core.metrics.Meter");
+                throw new SQLException("Meter " + className + " does not implement tech.ydb.core.metrics.Meter");
             } catch (ClassNotFoundException ex) {
-                throw new SQLException("meter " + className + " not found", ex);
+                throw new SQLException("Meter class " + className + " not found", ex);
             } catch (NoSuchMethodException | SecurityException | InstantiationException | IllegalAccessException
                     | IllegalArgumentException | InvocationTargetException ex) {
                 throw new SQLException("Cannot construct meter " + className, ex);
