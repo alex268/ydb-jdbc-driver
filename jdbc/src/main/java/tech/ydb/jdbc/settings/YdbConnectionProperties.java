@@ -84,6 +84,9 @@ public class YdbConnectionProperties {
             "Enable metric collection for YDB SDK operations, object instance or class full name implementing "
                     + "Meter or Supplier<Meter>. Can be 'true' for the default global OpenTelemetry meter");
 
+    static final YdbProperty<String> METER_POOL_NAME = YdbProperty.string("meterPoolName",
+            "The value of the metric's attribute 'poolName'. By defaul is 'jdbc'", "jdbc");
+
     private final String username;
     private final String password;
 
@@ -101,6 +104,7 @@ public class YdbConnectionProperties {
     private final YdbValue<Object> channelInitializer;
     private final YdbValue<Object> withTracer;
     private final YdbValue<Object> withMeter;
+    private final YdbValue<String> meterPoolName;
     private final YdbValue<String> grpcCompression;
 
     public YdbConnectionProperties(String username, String password, Properties props) throws SQLException {
@@ -121,6 +125,7 @@ public class YdbConnectionProperties {
         this.channelInitializer = CHANNEL_INITIALIZER.readValue(props);
         this.withTracer = WITH_TRACER.readValue(props);
         this.withMeter = WITH_METER.readValue(props);
+        this.meterPoolName = METER_POOL_NAME.readValue(props);
         this.grpcCompression = GRPC_COMPRESSION.readValue(props);
     }
 
@@ -277,8 +282,9 @@ public class YdbConnectionProperties {
         }
 
         Meter meter = getMeter();
-        table.withMeter(meter, "jdbc");
-        query.withMeter(meter, "jdbc");
+        String poolName = meterPoolName.getValue();
+        table.withMeter(meter, poolName);
+        query.withMeter(meter, poolName);
     }
 
     private GrpcTransportBuilder applyTokenProvider(GrpcTransportBuilder builder, Object provider) throws SQLException {
