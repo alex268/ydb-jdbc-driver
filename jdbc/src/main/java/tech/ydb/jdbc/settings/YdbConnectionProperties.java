@@ -460,10 +460,10 @@ public class YdbConnectionProperties {
                 if (!Meter.class.isAssignableFrom(clazz)) {
                     throw new SQLException("meter " + className + " is not implement tech.ydb.core.metrics.Meter");
                 }
-                Meter tracer = clazz.asSubclass(Meter.class)
+                Meter meter = clazz.asSubclass(Meter.class)
                         .getConstructor(new Class<?>[0])
                         .newInstance(new Object[0]);
-                return tracer;
+                return meter;
             } catch (ClassNotFoundException ex) {
                 throw new SQLException("meter " + className + " not found", ex);
             } catch (NoSuchMethodException | SecurityException | InstantiationException | IllegalAccessException

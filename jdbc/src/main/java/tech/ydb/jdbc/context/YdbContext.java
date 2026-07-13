@@ -276,7 +276,7 @@ public class YdbContext implements AutoCloseable {
             connProps.applyToClients(tb, qb);
             boolean autoResize = clientProps.applyToTableClient(tb, qb);
             return new YdbContext(config, operProps, queryProps, transport, tb.build(), qb.build(), autoResize);
-        } catch (SQLException ex) {
+        } catch (SQLException | RuntimeException ex) {
             transport.close();
             throw ex;
         }
