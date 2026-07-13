@@ -6,7 +6,7 @@
     <groupId>tech.ydb.jdbc</groupId>
 
     <artifactId>ydb-jdbc-driver-parent</artifactId>
-    <version>2.3.27-SNAPSHOT</version>
+    <version>2.3.28-SNAPSHOT</version>
 
     <name>YDB JDBC Module</name>
     <description>JDBC Driver over YDB Java SDK</description>
@@ -20,7 +20,7 @@
         <slf4j.version>2.0.17</slf4j.version>
         <junit.version>5.13.4</junit.version>
 
-        <ydb.sdk.version>2.4.6</ydb.sdk.version>
+        <ydb.sdk.version>2.4.7</ydb.sdk.version>
     </properties>
 
     <licenses>
@@ -108,6 +108,7 @@
                     <version>3.12.0</version>
                     <configuration>
                         <source>8</source>
+                        <doclint>all,-missing</doclint>
                     </configuration>
                     <executions>
                         <execution>
