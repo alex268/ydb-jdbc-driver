@@ -5,6 +5,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Properties;
+import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,20 @@ public class CustomTracerTest {
             }
         }
         Assertions.assertTrue(custom.spanCreated > 0);
+    }
+
+    @Test
+    public void customTracerSupplierTest() throws SQLException {
+        Properties props = new Properties();
+        TestTracer impl = new TestTracer();
+        Supplier<Tracer> generator = () -> impl;
+        props.put("withTracer", generator);
+        try (Connection conn = DriverManager.getConnection(jdbcUrl.build(), props)) {
+            try (ResultSet rs = conn.createStatement().executeQuery("SELECT 1 + 2")) {
+                Assertions.assertTrue(rs.next());
+            }
+        }
+        Assertions.assertTrue(impl.spanCreated > 0);
     }
 
     private class TestTracer implements Tracer {

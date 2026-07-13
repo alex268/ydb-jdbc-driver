@@ -5,6 +5,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Properties;
+import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,20 @@ public class CustomMeterTest {
             }
         }
         Assertions.assertTrue(custom.countersCreated > 0);
+    }
+
+    @Test
+    public void customMeterSupplierTest() throws SQLException {
+        TestMeter impl = new TestMeter();
+        Supplier<Meter> generator = () -> impl;
+        Properties props = new Properties();
+        props.put("withMeter", generator);
+        try (Connection conn = DriverManager.getConnection(jdbcUrl.build(), props)) {
+            try (ResultSet rs = conn.createStatement().executeQuery("SELECT 1 + 2")) {
+                Assertions.assertTrue(rs.next());
+            }
+        }
+        Assertions.assertTrue(impl.countersCreated > 0);
     }
 
     private class TestMeter implements Meter {

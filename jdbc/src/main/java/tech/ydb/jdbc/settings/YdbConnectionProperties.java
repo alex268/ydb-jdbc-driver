@@ -77,12 +77,12 @@ public class YdbConnectionProperties {
     );
 
     static final YdbProperty<Object> WITH_TRACER = YdbProperty.object("withTracer",
-            "Enable tracing for YDB client operations, object instance or class full name "
-                    + "implementing Tracer. Can be 'true' for the default global OpenTelemetry tracer");
+            "Enable tracing for YDB client operations, object instance or class full name implementing "
+                    + "Tracer or Supplier<Tracer>. Can be 'true' for the default global OpenTelemetry tracer");
 
     static final YdbProperty<Object> WITH_METER = YdbProperty.object("withMeter",
-            "Enable metric collection for YDB SDK operations, object instance or class full name "
-                    + "implementing Meter. Can be 'true' for the default global OpenTelemetry meter");
+            "Enable metric collection for YDB SDK operations, object instance or class full name implementing "
+                    + "Meter or Supplier<Meter>. Can be 'true' for the default global OpenTelemetry meter");
 
     private final String username;
     private final String password;
@@ -377,6 +377,13 @@ public class YdbConnectionProperties {
             return (Tracer) obj;
         }
 
+        if (obj instanceof Supplier) {
+            Object impl = ((Supplier) obj).get();
+            if (impl instanceof Tracer) {
+                return (Tracer) impl;
+            }
+        }
+
         if (obj instanceof String) {
             String className = (String) obj;
 
@@ -403,13 +410,26 @@ public class YdbConnectionProperties {
 
             try {
                 Class<?> clazz = Class.forName(className);
-                if (!Tracer.class.isAssignableFrom(clazz)) {
-                    throw new SQLException("tracer " + className + " is not implement tech.ydb.core.tracing.Tracer");
+
+                if (Tracer.class.isAssignableFrom(clazz)) {
+                    Tracer tracer = clazz.asSubclass(Tracer.class)
+                            .getConstructor(new Class<?>[0])
+                            .newInstance(new Object[0]);
+                    return tracer;
                 }
-                Tracer tracer = clazz.asSubclass(Tracer.class)
-                        .getConstructor(new Class<?>[0])
-                        .newInstance(new Object[0]);
-                return tracer;
+
+                if (Supplier.class.isAssignableFrom(clazz)) {
+                    Supplier<?> prov = clazz.asSubclass(Supplier.class)
+                            .getConstructor(new Class<?>[0])
+                            .newInstance(new Object[0]);
+                    Object tracer = prov.get();
+                    if (tracer instanceof Tracer) {
+                        return (Tracer) tracer;
+                    }
+                    throw new SQLException("tracer " + className + " is not implement Supplier<Tracer>");
+                }
+
+                throw new SQLException("tracer " + className + " is not implement tech.ydb.core.tracing.Tracer");
             } catch (ClassNotFoundException ex) {
                 throw new SQLException("tracer " + className + " not found", ex);
             } catch (NoSuchMethodException | SecurityException | InstantiationException | IllegalAccessException
@@ -429,6 +449,12 @@ public class YdbConnectionProperties {
         }
         if (obj instanceof Meter) {
             return (Meter) obj;
+        }
+        if (obj instanceof Supplier) {
+            Object impl = ((Supplier) obj).get();
+            if (impl instanceof Meter) {
+                return (Meter) impl;
+            }
         }
 
         if (obj instanceof String) {
@@ -457,13 +483,26 @@ public class YdbConnectionProperties {
 
             try {
                 Class<?> clazz = Class.forName(className);
-                if (!Meter.class.isAssignableFrom(clazz)) {
-                    throw new SQLException("meter " + className + " is not implement tech.ydb.core.metrics.Meter");
+
+                if (Meter.class.isAssignableFrom(clazz)) {
+                    Meter meter = clazz.asSubclass(Meter.class)
+                            .getConstructor(new Class<?>[0])
+                            .newInstance(new Object[0]);
+                    return meter;
                 }
-                Meter meter = clazz.asSubclass(Meter.class)
-                        .getConstructor(new Class<?>[0])
-                        .newInstance(new Object[0]);
-                return meter;
+
+                if (Supplier.class.isAssignableFrom(clazz)) {
+                    Supplier<?> prov = clazz.asSubclass(Supplier.class)
+                            .getConstructor(new Class<?>[0])
+                            .newInstance(new Object[0]);
+                    Object meter = prov.get();
+                    if (meter instanceof Meter) {
+                        return (Meter) meter;
+                    }
+                    throw new SQLException("meter " + className + " is not implement Supplier<Meter>");
+                }
+
+                throw new SQLException("meter " + className + " is not implement tech.ydb.core.metrics.Meter");
             } catch (ClassNotFoundException ex) {
                 throw new SQLException("meter " + className + " not found", ex);
             } catch (NoSuchMethodException | SecurityException | InstantiationException | IllegalAccessException
