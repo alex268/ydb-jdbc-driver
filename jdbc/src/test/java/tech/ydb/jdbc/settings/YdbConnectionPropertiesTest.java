@@ -23,6 +23,17 @@ public class YdbConnectionPropertiesTest {
     private static final String YDB_URL = "grpc://localhost/local";
 
     @Test
+    public void defaultValuesTest() throws SQLException {
+        Properties props = new Properties();
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        Assertions.assertNull(cp.getMeter());
+        Assertions.assertNull(cp.getTracer());
+        Assertions.assertNull(cp.getToken());
+        Assertions.assertNull(cp.getLocalDataCenter());
+        Assertions.assertNull(cp.getSecureConnectionCert());
+    }
+
+    @Test
     public void tokenProviderTest() throws SQLException {
         Properties props = new Properties();
         props.put("tokenProvider", (AuthProvider) () -> () -> "AUTH_PROVIDER");
@@ -105,7 +116,7 @@ public class YdbConnectionPropertiesTest {
         props.put("tokenProvider", "tech.ydb.jdbc.settings.CustomChannelInitilizer");
         YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
         ExceptionAssert.sqlException(
-                "tokenProvider tech.ydb.jdbc.settings.CustomChannelInitilizer is not implement Supplier<String>",
+                "tokenProvider tech.ydb.jdbc.settings.CustomChannelInitilizer does not implement Supplier<String>",
                 () -> cp.applyToGrpcTransport(GrpcTransport.forConnectionString(YDB_URL))
         );
     }
@@ -203,7 +214,7 @@ public class YdbConnectionPropertiesTest {
         props.put("channelInitializer", "tech.ydb.jdbc.settings.StaticTokenProvider");
         YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
         ExceptionAssert.sqlException(
-                "channelInitializer tech.ydb.jdbc.settings.StaticTokenProvider is not implement "
+                "channelInitializer tech.ydb.jdbc.settings.StaticTokenProvider does not implement "
                         + "Consumer<ManagedChannelBuilder>",
                 () -> cp.applyToGrpcTransport(GrpcTransport.forConnectionString(YDB_URL))
         );
@@ -219,5 +230,219 @@ public class YdbConnectionPropertiesTest {
                 "Cannot parse channelInitializer java.lang.Object",
                 () -> cp.applyToGrpcTransport(GrpcTransport.forConnectionString(YDB_URL))
         );
+    }
+
+    @Test
+    public void tracerWrongObjectTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withTracer", new Object());
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+
+        ExceptionAssert.sqlException("Cannot parse tracer java.lang.Object", cp::getTracer);
+    }
+
+    @Test
+    public void tracerWrongSupplierTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withTracer", new StaticTokenProvider());
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+
+        ExceptionAssert.sqlException(
+                "Tracer supplier tech.ydb.jdbc.settings.StaticTokenProvider did not return a Tracer instance",
+                cp::getTracer
+        );
+    }
+
+    @Test
+    public void tracerDefaultValueTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withTracer", "true");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+
+        ExceptionAssert.sqlException(
+                "withTracer requires io.opentelemetry:opentelemetry-api on the classpath",
+                cp::getTracer
+        );
+    }
+
+    @Test
+    public void tracerWrongClassNameTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withTracer", "1tech.ydb.jdbc.settings.StaticTokenProvider");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        ExceptionAssert.sqlException(
+                "withTracer option must be full class name or object instance implementing tech.ydb.core.tracing.Tracer",
+                cp::getTracer
+        );
+    }
+
+    @Test
+    public void tracerNonTracerClassTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withTracer", "tech.ydb.jdbc.settings.CustomMeter");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        ExceptionAssert.sqlException(
+                "Tracer tech.ydb.jdbc.settings.CustomMeter does not implement tech.ydb.core.tracing.Tracer",
+                cp::getTracer
+        );
+    }
+
+    @Test
+    public void tracerUnknownClassTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withTracer", "tech.ydb.jdbc.settings.TestTracer");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        ExceptionAssert.sqlException("Tracer class tech.ydb.jdbc.settings.TestTracer not found", cp::getTracer);
+    }
+
+    @Test
+    public void tracerIncorrectSupplierClassTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withTracer", "tech.ydb.jdbc.settings.StaticTokenProvider");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        ExceptionAssert.sqlException(
+                "Tracer tech.ydb.jdbc.settings.StaticTokenProvider supplied object is not a Tracer instance",
+                cp::getTracer
+        );
+    }
+
+    @Test
+    public void tracerBadClassTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withTracer", BadCustomTracer.class.getCanonicalName());
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        ExceptionAssert.sqlException("Cannot construct tracer tech.ydb.jdbc.settings.BadCustomTracer", cp::getTracer);
+    }
+
+    @Test
+    public void tracerObjectTest() throws SQLException {
+        CustomTracer tracer = new CustomTracer();
+        Properties props = new Properties();
+        props.put("withTracer", tracer);
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        Assertions.assertSame(tracer, cp.getTracer());
+    }
+
+    @Test
+    public void tracerClassNameTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withTracer", "tech.ydb.jdbc.settings.CustomTracer");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        Assertions.assertEquals("tech.ydb.jdbc.settings.CustomTracer", cp.getTracer().getClass().getCanonicalName());
+    }
+
+    @Test
+    public void tracerClassNameSupplierTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withTracer", "tech.ydb.jdbc.settings.CustomTracer$Generator");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        Assertions.assertEquals("tech.ydb.jdbc.settings.CustomTracer", cp.getTracer().getClass().getName());
+    }
+
+    @Test
+    public void meterWrongObjectTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withMeter", new Object());
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+
+        ExceptionAssert.sqlException("Cannot parse meter java.lang.Object", cp::getMeter);
+    }
+
+    @Test
+    public void meterWrongSupplierTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withMeter", new StaticTokenProvider());
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+
+        ExceptionAssert.sqlException(
+                "Meter supplier tech.ydb.jdbc.settings.StaticTokenProvider did not return a Meter instance",
+                cp::getMeter
+        );
+    }
+
+    @Test
+    public void meterDefaultValueTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withMeter", "true");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+
+        ExceptionAssert.sqlException(
+                "withMeter requires io.opentelemetry:opentelemetry-api on the classpath",
+                cp::getMeter
+        );
+    }
+
+    @Test
+    public void meterWrongClassNameTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withMeter", "1tech.ydb.jdbc.settings.StaticTokenProvider");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        ExceptionAssert.sqlException(
+                "withMeter option must be full class name or object instance implementing tech.ydb.core.metrics.Meter",
+                cp::getMeter
+        );
+    }
+
+    @Test
+    public void meterNonTracerClassTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withMeter", "tech.ydb.jdbc.settings.CustomTracer");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        ExceptionAssert.sqlException(
+                "Meter tech.ydb.jdbc.settings.CustomTracer does not implement tech.ydb.core.metrics.Meter",
+                cp::getMeter
+        );
+    }
+
+    @Test
+    public void meterUnknownClassTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withMeter", "tech.ydb.jdbc.settings.TestTracer");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        ExceptionAssert.sqlException("Meter class tech.ydb.jdbc.settings.TestTracer not found", cp::getMeter);
+    }
+
+    @Test
+    public void meterIncorrentSupplierlassTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withMeter", "tech.ydb.jdbc.settings.StaticTokenProvider");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        ExceptionAssert.sqlException(
+                "Meter tech.ydb.jdbc.settings.StaticTokenProvider supplied object is not a Meter instance",
+                cp::getMeter
+        );
+    }
+
+    @Test
+    public void meterBadClassTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withMeter", BadCustomMeter.class.getCanonicalName());
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        ExceptionAssert.sqlException("Cannot construct meter tech.ydb.jdbc.settings.BadCustomMeter", cp::getMeter);
+    }
+
+    @Test
+    public void meterObjectTest() throws SQLException {
+        CustomMeter meter = new CustomMeter();
+        Properties props = new Properties();
+        props.put("withMeter", meter);
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        Assertions.assertSame(meter, cp.getMeter());
+    }
+
+    @Test
+    public void meterClassNameTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withMeter", "tech.ydb.jdbc.settings.CustomMeter");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        Assertions.assertEquals("tech.ydb.jdbc.settings.CustomMeter", cp.getMeter().getClass().getName());
+    }
+
+    @Test
+    public void meterClassNameSupplierTest() throws SQLException {
+        Properties props = new Properties();
+        props.put("withMeter", "tech.ydb.jdbc.settings.CustomMeter$Generator");
+        YdbConnectionProperties cp = new YdbConnectionProperties(null, null, props);
+        Assertions.assertEquals("tech.ydb.jdbc.settings.CustomMeter", cp.getMeter().getClass().getName());
     }
 }

@@ -226,15 +226,15 @@ public class YdbContext implements AutoCloseable {
     }
 
     public static YdbContext createContext(YdbConfig config) throws SQLException {
-        GrpcTransport grpcTransport = null;
+        LOGGER.log(Level.FINE, "Creating new YDB context to {0}", config.getConnectionString());
+        GrpcTransport transport = null;
+
+        YdbConnectionProperties connProps = new YdbConnectionProperties(config);
+        YdbClientProperties clientProps = new YdbClientProperties(config);
+        YdbOperationProperties operProps = new YdbOperationProperties(config);
+        YdbQueryProperties queryProps = new YdbQueryProperties(config);
+
         try {
-            LOGGER.log(Level.FINE, "Creating new YDB context to {0}", config.getConnectionString());
-
-            YdbConnectionProperties connProps = new YdbConnectionProperties(config);
-            YdbClientProperties clientProps = new YdbClientProperties(config);
-            YdbOperationProperties operationProps = new YdbOperationProperties(config);
-            YdbQueryProperties queryProps = new YdbQueryProperties(config);
-
             GrpcTransportBuilder builder = GrpcTransport.forConnectionString(config.getConnectionString());
             JdbcDriverVersion version = JdbcDriverVersion.getInstance();
             if (version.isSdkVersion(2, 3, 30)) {
@@ -259,25 +259,8 @@ public class YdbContext implements AutoCloseable {
                 });
             });
 
-            grpcTransport = config.isUseDiscovery() ? builder.build() : new SingleChannelTransport(builder);
-
-            PooledTableClient.Builder tableClient = PooledTableClient.newClient(
-                    GrpcTableRpc.useTransport(grpcTransport)
-            );
-            QueryClientImpl.Builder queryClient = QueryClientImpl.newClient(grpcTransport);
-
-            boolean autoResize = clientProps.applyToTableClient(tableClient, queryClient);
-
-            return new YdbContext(config, operationProps, queryProps, grpcTransport, tableClient.build(),
-                    queryClient.build(), autoResize);
+            transport = config.isUseDiscovery() ? builder.build() : new SingleChannelTransport(builder);
         } catch (RuntimeException ex) {
-            if (grpcTransport != null) {
-                try {
-                    grpcTransport.close();
-                } catch (Exception exClose) {
-                    LOGGER.log(Level.FINE, "Issue when closing gRPC transport", exClose);
-                }
-            }
             StringBuilder sb = new StringBuilder("Cannot connect to YDB: ").append(ex.getMessage());
             Throwable cause = ex.getCause();
             while (cause != null) {
@@ -285,6 +268,17 @@ public class YdbContext implements AutoCloseable {
                 cause = cause.getCause();
             }
             throw new SQLException(sb.toString(), ex);
+        }
+
+        try {
+            PooledTableClient.Builder tb = PooledTableClient.newClient(GrpcTableRpc.useTransport(transport));
+            QueryClientImpl.Builder qb = QueryClientImpl.newClient(transport);
+            connProps.applyToClients(tb, qb);
+            boolean autoResize = clientProps.applyToTableClient(tb, qb);
+            return new YdbContext(config, operProps, queryProps, transport, tb.build(), qb.build(), autoResize);
+        } catch (SQLException | RuntimeException ex) {
+            transport.close();
+            throw ex;
         }
     }
 

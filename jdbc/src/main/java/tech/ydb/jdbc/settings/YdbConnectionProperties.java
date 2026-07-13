@@ -1,6 +1,7 @@
 package tech.ydb.jdbc.settings;
 
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.sql.SQLException;
 import java.util.Properties;
 import java.util.function.Consumer;
@@ -9,6 +10,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
+import com.google.common.annotations.VisibleForTesting;
+
 import tech.ydb.auth.AuthProvider;
 import tech.ydb.auth.TokenAuthProvider;
 import tech.ydb.auth.iam.CloudAuthHelper;
@@ -16,13 +19,20 @@ import tech.ydb.core.auth.StaticCredentials;
 import tech.ydb.core.grpc.BalancingSettings;
 import tech.ydb.core.grpc.GrpcCompression;
 import tech.ydb.core.grpc.GrpcTransportBuilder;
+import tech.ydb.core.metrics.Meter;
+import tech.ydb.core.tracing.Tracer;
 import tech.ydb.jdbc.YdbDriver;
+import tech.ydb.jdbc.common.JdbcDriverVersion;
+import tech.ydb.query.QueryClient;
+import tech.ydb.table.impl.PooledTableClient;
 
 
 public class YdbConnectionProperties {
     private static final Logger LOGGER = Logger.getLogger(YdbDriver.class.getName());
     private static final String ID_PATTERN = "\\p{javaJavaIdentifierStart}\\p{javaJavaIdentifierPart}*";
     private static final Pattern FQCN = Pattern.compile(ID_PATTERN + "(\\." + ID_PATTERN + ")*");
+    private static final String OPENTELEMETRY_TRACER_CLASS = "tech.ydb.core.tracing.OpenTelemetryTracer";
+    private static final String OPENTELEMETRY_METER_CLASS = "tech.ydb.core.metrics.OpenTelemetryMeter";
 
     static final YdbProperty<String> TOKEN = YdbProperty.content(YdbConfig.TOKEN_KEY, "Authentication token");
 
@@ -66,6 +76,17 @@ public class YdbConnectionProperties {
             "grpcCompression", "Use specified GRPC compressor (supported only none and gzip)"
     );
 
+    static final YdbProperty<Object> WITH_TRACER = YdbProperty.object("withTracer",
+            "Enable tracing for YDB client operations, object instance or class full name implementing "
+                    + "Tracer or Supplier<Tracer>. Can be 'true' for the default global OpenTelemetry tracer");
+
+    static final YdbProperty<Object> WITH_METER = YdbProperty.object("withMeter",
+            "Enable metric collection for YDB SDK operations, object instance or class full name implementing "
+                    + "Meter or Supplier<Meter>. Can be 'true' for the default global OpenTelemetry meter");
+
+    static final YdbProperty<String> METER_POOL_NAME = YdbProperty.string("meterPoolName",
+            "The value of the metric's attribute 'poolName'. By default is 'jdbc'", "jdbc");
+
     private final String username;
     private final String password;
 
@@ -81,6 +102,9 @@ public class YdbConnectionProperties {
     private final YdbValue<String> metadataUrl;
     private final YdbValue<Object> tokenProvider;
     private final YdbValue<Object> channelInitializer;
+    private final YdbValue<Object> withTracer;
+    private final YdbValue<Object> withMeter;
+    private final YdbValue<String> meterPoolName;
     private final YdbValue<String> grpcCompression;
 
     public YdbConnectionProperties(String username, String password, Properties props) throws SQLException {
@@ -99,6 +123,9 @@ public class YdbConnectionProperties {
         this.metadataUrl = METADATA_URL.readValue(props);
         this.tokenProvider = TOKEN_PROVIDER.readValue(props);
         this.channelInitializer = CHANNEL_INITIALIZER.readValue(props);
+        this.withTracer = WITH_TRACER.readValue(props);
+        this.withMeter = WITH_METER.readValue(props);
+        this.meterPoolName = METER_POOL_NAME.readValue(props);
         this.grpcCompression = GRPC_COMPRESSION.readValue(props);
     }
 
@@ -218,6 +245,16 @@ public class YdbConnectionProperties {
             builder = applyChannelInitializer(builder, initializer);
         }
 
+        if (withTracer.hasValue()) {
+            JdbcDriverVersion version = JdbcDriverVersion.getInstance();
+            if (version.isSdkVersion(2, 4, 6)) {
+                builder = builder.withTracer(getTracer());
+            } else {
+                LOGGER.log(Level.WARNING, "Option 'withTracer' was ignored because SDK version {0} is too old",
+                        version.getSdkVersion());
+            }
+        }
+
         if (grpcCompression.hasValue()) {
             String value = grpcCompression.getValue();
             if ("none".equalsIgnoreCase(value)) {
@@ -230,6 +267,24 @@ public class YdbConnectionProperties {
         }
 
         return builder;
+    }
+
+    public void applyToClients(PooledTableClient.Builder table, QueryClient.Builder query) throws SQLException {
+        if (!withMeter.hasValue()) {
+            return;
+        }
+
+        JdbcDriverVersion version = JdbcDriverVersion.getInstance();
+        if (!version.isSdkVersion(2, 4, 6)) {
+            LOGGER.log(Level.WARNING, "Option 'withMeter' was ignored because SDK version {0} is too old",
+                    version.getSdkVersion());
+            return;
+        }
+
+        Meter meter = getMeter();
+        String poolName = meterPoolName.getValue();
+        table.withMeter(meter, poolName);
+        query.withMeter(meter, poolName);
     }
 
     private GrpcTransportBuilder applyTokenProvider(GrpcTransportBuilder builder, Object provider) throws SQLException {
@@ -248,7 +303,7 @@ public class YdbConnectionProperties {
             try {
                 Class<?> clazz = Class.forName(className);
                 if (!Supplier.class.isAssignableFrom(clazz)) {
-                    throw new SQLException("tokenProvider " + className + " is not implement Supplier<String>");
+                    throw new SQLException("tokenProvider " + className + " does not implement Supplier<String>");
                 }
                 Supplier<?> prov = clazz.asSubclass(Supplier.class)
                         .getConstructor(new Class<?>[0])
@@ -303,7 +358,7 @@ public class YdbConnectionProperties {
         try {
             Class<?> clazz = Class.forName(className);
             if (!Consumer.class.isAssignableFrom(clazz)) {
-                throw new SQLException("channelInitializer " + className + " is not implement "
+                throw new SQLException("channelInitializer " + className + " does not implement "
                         + "Consumer<ManagedChannelBuilder>");
             }
             return clazz.asSubclass(Consumer.class)
@@ -315,5 +370,162 @@ public class YdbConnectionProperties {
                 | IllegalArgumentException | InvocationTargetException ex) {
             throw new SQLException("Cannot construct channelInitializer " + className, ex);
         }
+    }
+
+    @VisibleForTesting
+    Tracer getTracer() throws SQLException {
+        Object obj = withTracer.getValue();
+        if (obj == null) {
+            return null;
+        }
+
+        if (obj instanceof Tracer) {
+            return (Tracer) obj;
+        }
+
+        if (obj instanceof Supplier) {
+            Object impl = ((Supplier) obj).get();
+            if (impl instanceof Tracer) {
+                return (Tracer) impl;
+            } else {
+                String className = obj.getClass().getName();
+                throw new SQLException("Tracer supplier " + className + " did not return a Tracer instance");
+            }
+        }
+
+        if (obj instanceof String) {
+            String className = (String) obj;
+
+            if ("true".equalsIgnoreCase(className)) {
+                try {
+                    Class<?> clazz = Class.forName(OPENTELEMETRY_TRACER_CLASS);
+                    Method createGlobal = clazz.getMethod("createGlobal");
+                    Object global = createGlobal.invoke(null);
+                    if (global instanceof Tracer) {
+                        return (Tracer) global;
+                    }
+                    throw new SQLException("OpenTelemetryTracer.createGlobal() did not return a Tracer");
+                } catch (ClassNotFoundException | NoClassDefFoundError  e) {
+                    throw new SQLException("withTracer requires io.opentelemetry:opentelemetry-api on the classpath",
+                            e);
+                } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+                    throw new SQLException("Cannot invoke OpenTelemetryTracer.createGlobal()", e);
+                }
+            }
+
+            if (!FQCN.matcher(className).matches()) {
+                throw new SQLException("withTracer option must be full class name or object instance implementing "
+                        + "tech.ydb.core.tracing.Tracer");
+            }
+
+            try {
+                Class<?> clazz = Class.forName(className);
+
+                if (Tracer.class.isAssignableFrom(clazz)) {
+                    Tracer tracer = clazz.asSubclass(Tracer.class)
+                            .getConstructor(new Class<?>[0])
+                            .newInstance(new Object[0]);
+                    return tracer;
+                }
+
+                if (Supplier.class.isAssignableFrom(clazz)) {
+                    Supplier<?> prov = clazz.asSubclass(Supplier.class)
+                            .getConstructor(new Class<?>[0])
+                            .newInstance(new Object[0]);
+                    Object tracer = prov.get();
+                    if (tracer instanceof Tracer) {
+                        return (Tracer) tracer;
+                    }
+
+                    throw new SQLException("Tracer " + className + " supplied object is not a Tracer instance");
+                }
+
+                throw new SQLException("Tracer " + className + " does not implement tech.ydb.core.tracing.Tracer");
+            } catch (ClassNotFoundException ex) {
+                throw new SQLException("Tracer class " + className + " not found", ex);
+            } catch (NoSuchMethodException | SecurityException | InstantiationException | IllegalAccessException
+                    | IllegalArgumentException | InvocationTargetException ex) {
+                throw new SQLException("Cannot construct tracer " + className, ex);
+            }
+        }
+
+        throw new SQLException("Cannot parse tracer " + obj.getClass().getName());
+    }
+
+    @VisibleForTesting
+    Meter getMeter() throws SQLException {
+        Object obj = withMeter.getValue();
+        if (obj == null) {
+            return null;
+        }
+        if (obj instanceof Meter) {
+            return (Meter) obj;
+        }
+        if (obj instanceof Supplier) {
+            Object impl = ((Supplier) obj).get();
+            if (impl instanceof Meter) {
+                return (Meter) impl;
+            } else {
+                String className = obj.getClass().getName();
+                throw new SQLException("Meter supplier " + className + " did not return a Meter instance");
+            }
+        }
+
+        if (obj instanceof String) {
+            String className = (String) obj;
+
+            if ("true".equalsIgnoreCase(className)) {
+                try {
+                    Class<?> clazz = Class.forName(OPENTELEMETRY_METER_CLASS);
+                    Method createGlobal = clazz.getMethod("createGlobal");
+                    Object global = createGlobal.invoke(null);
+                    if (global instanceof Meter) {
+                        return (Meter) global;
+                    }
+                    throw new SQLException("OpenTelemetryMeter.createGlobal() did not return a Meter");
+                } catch (ClassNotFoundException | NoClassDefFoundError  e) {
+                    throw new SQLException("withMeter requires io.opentelemetry:opentelemetry-api on the classpath",
+                            e);
+                } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+                    throw new SQLException("Cannot invoke OpenTelemetryMeter.createGlobal()", e);
+                }
+            }
+
+            if (!FQCN.matcher(className).matches()) {
+                throw new SQLException("withMeter option must be full class name or object instance implementing "
+                        + "tech.ydb.core.metrics.Meter");
+            }
+
+            try {
+                Class<?> clazz = Class.forName(className);
+
+                if (Meter.class.isAssignableFrom(clazz)) {
+                    Meter meter = clazz.asSubclass(Meter.class)
+                            .getConstructor(new Class<?>[0])
+                            .newInstance(new Object[0]);
+                    return meter;
+                }
+
+                if (Supplier.class.isAssignableFrom(clazz)) {
+                    Supplier<?> prov = clazz.asSubclass(Supplier.class)
+                            .getConstructor(new Class<?>[0])
+                            .newInstance(new Object[0]);
+                    Object meter = prov.get();
+                    if (meter instanceof Meter) {
+                        return (Meter) meter;
+                    }
+                    throw new SQLException("Meter " + className + " supplied object is not a Meter instance");
+                }
+
+                throw new SQLException("Meter " + className + " does not implement tech.ydb.core.metrics.Meter");
+            } catch (ClassNotFoundException ex) {
+                throw new SQLException("Meter class " + className + " not found", ex);
+            } catch (NoSuchMethodException | SecurityException | InstantiationException | IllegalAccessException
+                    | IllegalArgumentException | InvocationTargetException ex) {
+                throw new SQLException("Cannot construct meter " + className, ex);
+            }
+        }
+
+        throw new SQLException("Cannot parse meter " + obj.getClass().getName());
     }
 }
